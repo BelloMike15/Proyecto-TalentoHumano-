@@ -1,0 +1,138 @@
+using System;
+using System.Collections.Generic;
+using System.Data.SqlClient;
+using System.IO;
+using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
+
+class Program
+{
+    static void Main()
+    {
+        // Example usage
+        string connectionString = "Server=IvaniaZambrano\\SQLEXPRESS;Database=TalentoHumano;Integrated Security=True;";
+        var usuarios = ObtenerUsuarios(connectionString);
+        foreach (var usuario in usuarios)
+        {
+            Console.WriteLine(usuario);
+        }
+
+        string logDirectory = "C:\\Users\\Ivani\\Desktop\\Informe_log.pdf"; 
+        string fechaInicio = "2024-01-01 00:00:00";
+        string fechaFin = "2024-12-31 23:59:59";
+        var logs = LeerLogsEnRango(logDirectory, fechaInicio, fechaFin, "some_user");
+        foreach (var log in logs)
+        {
+            Console.WriteLine($"{log.FechaHora} - {log.Linea}");
+        }
+    }
+
+    public static List<string> ObtenerUsuarios(string connectionString)
+    {
+        var usuarios = new List<string>();
+
+        using (SqlConnection connection = new SqlConnection(connectionString))
+        {
+            connection.Open();
+            SqlCommand command = new SqlCommand("SELECT name FROM sys.sql_logins;", connection);
+
+            using (SqlDataReader reader = command.ExecuteReader())
+            {
+                while (reader.Read())
+                {
+                    usuarios.Add(reader.GetString(0));
+                }
+            }
+        }
+
+        return usuarios;
+    }
+
+    public class LogEntry
+    {
+        public string FechaHora { get; set; }
+        public string Linea { get; set; }
+    }
+
+    public static List<LogEntry> LeerLogsEnRango(string logDirectory, string fechaInicio, string fechaFin, string usuario)
+    {
+        var logsCombinados = new List<LogEntry>();
+
+        if (!ValidarFechas(fechaInicio, fechaFin))
+        {
+            return logsCombinados;
+        }
+
+        DateTime fechaInicioDt = DateTime.ParseExact(fechaInicio, "yyyy-MM-dd HH:mm:ss", null);
+        DateTime fechaFinDt = DateTime.ParseExact(fechaFin, "yyyy-MM-dd HH:mm:ss", null);
+
+        var logFiles = Directory.GetFiles(logDirectory, "*.log").OrderBy(f => f);
+
+        foreach (var logFile in logFiles)
+        {
+            if (new FileInfo(logFile).Length > 0)
+            {
+                var rawData = File.ReadAllBytes(logFile);
+                var encoding = DetectEncoding(rawData);
+
+                string decodedData;
+                try
+                {
+                    decodedData = Encoding.GetEncoding(encoding).GetString(rawData);
+                }
+                catch (DecoderFallbackException)
+                {
+                    decodedData = Encoding.UTF8.GetString(rawData, 0, rawData.Length);
+                }
+
+                foreach (var line in decodedData.Split(new[] { Environment.NewLine }, StringSplitOptions.None))
+                {
+                    var match = Regex.Match(line, @"(?<fecha_hora>\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\+\d{2})");
+                    if (match.Success)
+                    {
+                        DateTime logFecha = DateTime.ParseExact(match.Groups["fecha_hora"].Value, "yyyy-MM-dd HH:mm:ssK", null);
+                        if (fechaInicioDt <= logFecha && logFecha <= fechaFinDt)
+                        {
+                            logsCombinados.Add(new LogEntry
+                            {
+                                FechaHora = logFecha.ToString("yyyy-MM-dd HH:mm:ss"),
+                                Linea = line
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        return logsCombinados;
+    }
+
+    public static bool ValidarFechas(string fechaInicio, string fechaFin)
+    {
+        try
+        {
+            DateTime.ParseExact(fechaInicio, "yyyy-MM-dd HH:mm:ss", null);
+            DateTime.ParseExact(fechaFin, "yyyy-MM-dd HH:mm:ss", null);
+            return true;
+        }
+        catch (FormatException)
+        {
+            Console.WriteLine("Formato de fecha y hora incorrecto. Por favor, use el formato 'YYYY-MM-DD HH:MM:SS'.");
+            return false;
+        }
+    }
+
+    public static string DetectEncoding(byte[] rawData)
+    {
+        
+        var utf8Preamble = Encoding.UTF8.GetPreamble();
+        if (rawData.Take(utf8Preamble.Length).SequenceEqual(utf8Preamble))
+        {
+            return "UTF-8";
+        }
+
+        
+        return "UTF-8";
+    }
+}
